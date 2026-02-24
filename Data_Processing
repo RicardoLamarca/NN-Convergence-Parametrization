@@ -1,0 +1,59 @@
+# DATA PREPROCESSING AND FEATURE ENGINEERING FOR FLUX.JL
+using DataFrames
+using CSV
+using Statistics
+using JSON
+
+println("Loading raw dataset...")
+# 1. Load the generated data
+df = CSV.read("mkts_convergence_dataset.csv", DataFrame)
+
+# 2. Feature Engineering (As recommended in your document)
+# We add derived features to help the Neural Network find non-linear relationships faster
+println("Engineering derived features...")
+df.volume = df.nx .* df.ny .* df.nz
+df.log_volume = log.(df.volume)
+df.aspect_xy = df.nx ./ df.ny
+df.aspect_xz = df.nx ./ df.nz
+
+# Note: If you added rmin, penal, or volfrac to your generation loop, 
+# you could add derived features like df.inv_rmin = 1.0 ./ df.rmin here.
+
+# 3. Define the Input Features (X)
+feature_cols = ["nx", "ny", "nz", "volume", "log_volume", "aspect_xy", "aspect_xz"]
+
+# 4. Calculate and store μ and σ (To maintain stable z-scores)
+scaler_params = Dict{String, Dict{String, Float64}}()
+
+println("Applying Z-score normalization...")
+for col in feature_cols
+    # Calculate statistics using Float64 to prevent precision loss
+    μ = mean(df[!, col])
+    σ = std(df[!, col])
+    
+    # Prevent division by zero just in case a feature is completely constant
+    if σ == 0.0 
+        σ = 1.0 
+    end
+    
+    # Store the parameters
+    scaler_params[col] = Dict("mean" => μ, "std" => σ)
+    
+    # Apply Standard Scaling: z = (x - μ) / σ
+    # We cast to Float32 because Flux and GPUs train much faster on 32-bit floats
+    df[!, col] = Float32.((df[!, col] .- μ) ./ σ)
+end
+
+# 5. Save the Scaler parameters for the Inference Phase
+open("scaler_params.json", "w") do f
+    JSON.print(f, scaler_params, 4) # 4 spaces for pretty printing
+end
+println("✓ Saved stable Z-score parameters to 'scaler_params.json'")
+
+# 6. Save the normalized dataset for Flux to use
+CSV.write("normalized_dataset.csv", df)
+println("✓ Saved normalized dataset to 'normalized_dataset.csv'")
+
+# Display a preview of the scaled features
+println("\nPreview of scaled features:")
+display(first(df[!, feature_cols], 5))
